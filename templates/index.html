@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SignBridge</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: url("/static/asl1.jpg") no-repeat center center fixed;
+            background-size: 100% 100%;
+        }
+
+        h2 {
+            margin: 30px;
+            font-family: 'Times New Roman', Times, serif;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+            margin-top: -20px;
+        }
+
+        .camera {
+            width: 700px;
+            height: 455px;
+            background-color: #4a4747;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 18px;
+            margin-top: 30px;
+        }
+
+        .history-button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 24px;
+            position: absolute;
+            top: 20px;
+            left: 20px;
+        }
+
+        .history {
+            display: none;
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            width: 300px;
+            height: 600px;
+            background-color: #eec896;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border: 2px solid black;
+            border-radius: 8px;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .translation-box {
+            width: 300px;
+            height: 150px;
+            background-color: #eec896;
+            border: 2px solid black;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+            resize: none;
+            position: absolute;
+            top: 150px;
+            left: 1175px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 40px;
+        }
+
+        .button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #e4b365;
+            color: #000000;
+            border: 2px solid black;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .button:hover:not(:disabled) {
+            background-color: #c3914c;
+        }
+
+        .extra-translation-box {
+            display: none;
+            width: 300px;
+            height: 150px;
+            background-color: #eec896;
+            border: 2px solid black;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            padding: 10px;
+            resize: none;
+            position: absolute;
+            top: 375px;
+            left: 1175px;
+        }
+
+        .loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+
+    </style>
+</head>
+<body>
+    <h2>SignBridge: Real Time Sign Language Recognition and Translation</h2>
+
+    <button class="history-button" id="history-button">&#8942;</button>
+    <div class="history" id="history-section">
+        <h3>History</h3>
+        <ul id="history-list"></ul>
+    </div>
+
+    <div class="container">
+        <div class="camera" id="camera-window">
+            <img id="video-feed" style="width: 100%; height: 100%; object-fit: contain;">
+        </div>
+
+        <textarea class="translation-box" id="translation-box" readonly></textarea>
+
+        <div class="buttons">
+            <button class="button" id="start-button">Start Camera</button>
+            <button class="button" id="reset-button">Reset</button>
+            <button class="button" id="translate-button">Translate</button>
+            <button class="button" id="backspace-button">Backspace</button>
+            <button class="button" id="stop-button">Stop</button>
+        </div>
+
+        <textarea class="extra-translation-box" id="extra-translation-box" readonly></textarea>
+    </div>
+
+    <div class="loading" id="loading">Translating...</div>
+
+    <script>
+        const socket = io();
+        
+        // DOM Elements
+        const videoFeed = document.getElementById('video-feed');
+        const historyButton = document.getElementById('history-button');
+        const historySection = document.getElementById('history-section');
+        const translateButton = document.getElementById('translate-button');
+        const extraTranslationBox = document.getElementById('extra-translation-box');
+        const resetButton = document.getElementById('reset-button');
+        const stopButton = document.getElementById('stop-button');
+        const startButton = document.getElementById('start-button');
+        const backspaceButton = document.getElementById('backspace-button');
+        const translationBox = document.getElementById('translation-box');
+        const historyList = document.getElementById('history-list');
+        const loadingIndicator = document.getElementById('loading');
+
+        // State management
+        let isTranslating = false;
+        let isCameraActive = false;
+        let lastFrameTime = 0;
+        const minFrameInterval = 30;
+        const translationTimeout = 10000;
+        let lastKeyPressTime = 0;
+        const keyDebounceTime = 300;
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateButtonStates();
+        });
+
+        socket.on('video_frame', (data) => {
+            const currentTime = Date.now();
+            if (currentTime - lastFrameTime < minFrameInterval) return;
+            
+            videoFeed.src = `data:image/jpeg;base64,${data.frame}`;
+            if (data.predicted_word) {
+                translationBox.value = data.predicted_word;
+            }
+            lastFrameTime = currentTime;
+        });
+
+        socket.on('translation', (data) => {
+            endTranslation();
+            extraTranslationBox.value = data.text;
+            extraTranslationBox.style.display = 'block';
+            addToHistory(data.text);
+        });
+
+        socket.on('translation_error', (data) => {
+            endTranslation();
+            alert('Translation failed. Please try again.');
+        });
+
+        // Button handlers
+        startButton.addEventListener('click', () => {
+            isCameraActive = true;
+            socket.emit('control', { key: 'start' });
+            updateButtonStates();
+        });
+
+        stopButton.addEventListener('click', () => {
+            isCameraActive = false;
+            socket.emit('control', { key: 'q' });
+            updateButtonStates();
+        });
+
+        resetButton.addEventListener('click', () => {
+            socket.emit('control', { key: 'r' });
+            historyList.innerHTML = '';
+            translationBox.value = '';
+            extraTranslationBox.value = '';
+            extraTranslationBox.style.display = 'none';
+        });
+
+        backspaceButton.addEventListener('click', () => {
+            socket.emit('control', { key: 'backspace' });
+        });
+
+        translateButton.addEventListener('click', () => {
+            if (!isTranslating && translationBox.value.trim()) {
+                startTranslation();
+                socket.emit('control', { key: 't' });
+                
+                setTimeout(() => {
+                    if (isTranslating) {
+                        endTranslation();
+                        alert('Translation timed out. Please try again.');
+                    }
+                }, translationTimeout);
+            }
+        });
+
+        historyButton.addEventListener('click', () => {
+            historySection.style.display = historySection.style.display === 'none' || !historySection.style.display ? 'block' : 'none';
+        });
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            const currentTime = Date.now();
+            if (currentTime - lastKeyPressTime < keyDebounceTime) return;
+            
+            if (e.key === 'Backspace') {
+                e.preventDefault();
+                socket.emit('control', { key: 'backspace' });
+                lastKeyPressTime = currentTime;
+            }
+        });
+
+        document.addEventListener('keypress', (e) => {
+            const currentTime = Date.now();
+            if (currentTime - lastKeyPressTime < keyDebounceTime) return;
+            
+            const key = e.key.toLowerCase();
+            if (['r', 'c', 's', 't', 'q'].includes(key)) {
+                socket.emit('control', { key });
+                lastKeyPressTime = currentTime;
+            }
+        });
+
+        // Helper functions
+        function startTranslation() {
+            isTranslating = true;
+            loadingIndicator.style.display = 'block';
+            translateButton.disabled = true;
+            updateButtonStates();
+        }
+
+        function endTranslation() {
+            isTranslating = false;
+            loadingIndicator.style.display = 'none';
+            translateButton.disabled = false;
+            updateButtonStates();
+        }
+
+        function updateButtonStates() {
+            startButton.disabled = isCameraActive;
+            stopButton.disabled = !isCameraActive;
+            translateButton.disabled = isTranslating || !isCameraActive;
+            resetButton.disabled = !isCameraActive;
+            backspaceButton.disabled = !isCameraActive;
+        }
+
+        function addToHistory(text) {
+            const listItem = document.createElement('li');
+            listItem.textContent = text;
+            historyList.appendChild(listItem);
+            historyList.scrollTop = historyList.scrollHeight;
+        }
+
+        // Initial button states
+        updateButtonStates();
+    </script>
+</body>
+</html>
