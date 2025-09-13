@@ -22,7 +22,7 @@
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/your-username/SignBridge.git
+git clone https://github.com/kshitideshpande/SignBridge.git
 cd SignBridge
 ```
 
