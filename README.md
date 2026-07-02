@@ -6,7 +6,7 @@ Real-time American Sign Language alphabet recognition using MobileNetV2 and Medi
 
 ## Demo
 
-▶️ [Watch demo](https://github.com/kshitideshpande/SignBridge/raw/main/demo_final.mp4)
+▶️ [Watch demo](https://youtu.be/8S9psWXlqLg)
 
 ---
 
